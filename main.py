@@ -1,34 +1,48 @@
+"""
+GeoTravel — веб-приложение для планирования путешествий, расчёта расстояний
+и сохранения маршрутов.
+Стек: Flask + SQLAlchemy + Yandex Geocoder API + Bootstrap 5
+"""
+
 import os
 import math
 import requests
-import sqlalchemy
 import sqlalchemy as sa
-import sqlalchemy.orm as orm
+from flask import Flask, render_template, redirect, request, url_for, jsonify
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from data import db_session
 from data.models import User, Trip, Stop
 from forms import RegisterForm, LoginForm
-from flask import Flask, render_template, redirect, request, url_for, jsonify, make_response
-from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 
+# ==================== КОНФИГУРАЦИЯ ПРИЛОЖЕНИЯ ====================
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'geo_travel_2024_secret_key_12345'
-app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
-app.config['UPLOAD_PATH'] = 'static/uploads'
+app.config['SECRET_KEY'] = 'geo_travel_2024_secret_key_12345'  # Ключ для подписи сессий
+app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}  # Разрешённые форматы файлов
+app.config['UPLOAD_PATH'] = 'static/uploads'  # Путь для сохранения загруженных изображений
 
+# ==================== АВТОРИЗАЦИЯ (Flask-Login) ====================
 login_manager = LoginManager()
 login_manager.init_app(app)
 
 @login_manager.user_loader
 def load_user(user_id):
+    """Позволяет Flask-Login восстанавливать объект пользователя из сессии при каждом запросе."""
     db_sess = db_session.create_session()
     return db_sess.get(User, user_id)
 
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
 def is_allowed_file(filename):
+    """Проверяет, что расширение файла входит в разрешённый список."""
     if not filename or '.' not in filename:
         return False
     return filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def get_coordinates(address):
+    """
+    Преобразует текстовый адрес в координаты (lat, lon) через Yandex Geocoder API.
+    Возвращает кортеж (lat, lon) или (None, None) при ошибке/если адрес не найден.
+    """
     api_key = '8013b162-6b42-4997-9691-77b7074026e0'
     url = f'http://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json'
     try:
@@ -43,6 +57,10 @@ def get_coordinates(address):
         return None, None
 
 def calculate_distance(lat1, lon1, lat2, lon2):
+    """
+    Вычисляет расстояние между двумя точками по формуле Haversine.
+    Возвращает расстояние в километрах (R = 6373 км — радиус Земли).
+    """
     R = 6373.0
     d_lat = math.radians(lat2 - lat1)
     d_lon = math.radians(lon2 - lon1)
@@ -50,12 +68,17 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
     return R * c
 
+# ==================== ОСНОВНЫЕ РОУТЫ ====================
+
 @app.route('/')
 def index():
+    """Главная страница приложения."""
     return render_template('index.html')
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    """Регистрация нового пользователя. При отправке формы создаёт запись в БД,
+    хеширует пароль и сохраняет аватар (если загружен)."""
     form = RegisterForm()
     if form.validate_on_submit():
         db_sess = db_session.create_session()
@@ -77,6 +100,7 @@ def register():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    """Авторизация пользователя. Проверяет email и пароль, создаёт сессию."""
     if current_user.is_authenticated:
         return redirect('/')
     form = LoginForm()
@@ -92,11 +116,13 @@ def login():
 @app.route('/logout')
 @login_required
 def logout():
+    """Завершение сессии пользователя."""
     logout_user()
     return redirect('/')
 
 @app.route('/profile/<int:user_id>')
 def profile(user_id):
+    """Страница профиля пользователя. Отображает персональные данные и список путешествий."""
     db_sess = db_session.create_session()
     user = db_sess.get(User, user_id)
     if not user:
@@ -106,6 +132,7 @@ def profile(user_id):
 @app.route('/new_trip', methods=['GET', 'POST'])
 @login_required
 def new_trip():
+    """Создание нового путешествия. Требует авторизации, сохраняет запись с привязкой к текущему пользователю."""
     if request.method == 'POST':
         title = request.form.get('title')
         description = request.form.get('description')
@@ -120,6 +147,7 @@ def new_trip():
 
 @app.route('/trip/<int:trip_id>')
 def trip_detail(trip_id):
+    """Подробная информация о путешествии. Отображает все остановки с координатами и фото."""
     db_sess = db_session.create_session()
     trip = db_sess.get(Trip, trip_id)
     if not trip:
@@ -129,6 +157,8 @@ def trip_detail(trip_id):
 @app.route('/add_stop/<int:trip_id>', methods=['POST'])
 @login_required
 def add_stop(trip_id):
+    """Добавление новой остановки в маршрут.
+    Автоматически геокодирует адрес, рассчитывает координаты и сохраняет фото (если загружено)."""
     db_sess = db_session.create_session()
     trip = db_sess.get(Trip, trip_id)
     if not trip or trip.user_id != current_user.id:
@@ -150,6 +180,10 @@ def add_stop(trip_id):
 
 @app.route('/trip_summary/<int:trip_id>')
 def trip_summary(trip_id):
+    """
+    Подсчёт итоговой протяжённости маршрута (сумма расстояний между всеми соседними остановками).
+    Возвращает HTML с заголовком, списком остановок и итоговым расстоянием в км.
+    """
     db_sess = db_session.create_session()
     trip = db_sess.get(Trip, trip_id)
     if not trip or not trip.stops:
@@ -163,6 +197,7 @@ def trip_summary(trip_id):
 
 @app.route('/calculate_distance')
 def api_distance():
+    """REST API: расчёт расстояния между двумя адресами (GET-параметры a и b)."""
     addr1 = request.args.get('a')
     addr2 = request.args.get('b')
     if not addr1 or not addr2:
@@ -175,6 +210,7 @@ def api_distance():
     return jsonify({'distance_km': round(dist, 1)})
 
 def main():
+    """Точка входа. Создаёт папки БД и загрузок, инициализирует SQLAlchemy и запускает сервер."""
     if not os.path.exists('db'):
         os.makedirs('db')
     db_session.global_init("db/geo_travel.db")
