@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ trip.title }}</h1>
+<p class="text-muted">{{ trip.description }}</p>
+
+{% if trip.user_id == current_user.id %}
+<div class="card mb-4 p-3 bg-light">
+    <h5>➕ Добавить остановку</h5>
+    <form method="post" action="/add_stop/{{ trip.id }}" enctype="multipart/form-data">
+        <div class="row g-2">
+            <div class="col-md-4">
+                <input type="text" name="name" class="form-control" placeholder="Название места" required>
+            </div>
+            <div class="col-md-5">
+                <input type="text" name="address" class="form-control" placeholder="Адрес (напр. Москва, Красная площадь)" required>
+            </div>
+            <div class="col-md-2">
+                <input type="file" name="photo" class="form-control" accept="image/*">
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-warning">Добавить</button>
+            </div>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+<h4>Остановки:</h4>
+{% if trip.stops %}
+    {% for stop in trip.stops %}
+        <div class="card mb-3">
+            <div class="card-body">
+                {% if stop.photo_path %}
+                    <img src="/static/{{ stop.photo_path }}" alt="{{ stop.name }}" style="max-width:200px;" class="img-thumbnail mb-2">
+                {% endif %}
+                <h5 class="card-title">{{ stop.name }}</h5>
+                <p class="card-text">{{ stop.address }}</p>
+                <small>Координаты: {{ stop.latitude }}, {{ stop.longitude }}</small>
+            </div>
+        </div>
+    {% endfor %}
+    <a href="/trip_summary/{{ trip.id }}" class="btn btn-info">📏 Посчитать расстояние</a>
+{% else %}
+    <p class="text-muted">Остановок нет. Добавьте первую!</p>
+{% endif %}
+
+<a href="/profile/{{ trip.user_id }}" class="btn btn-secondary mt-3">← Назад к профилю</a>
+{% endblock %}
